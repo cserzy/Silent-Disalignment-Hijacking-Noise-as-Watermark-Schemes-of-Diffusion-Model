@@ -39,7 +39,7 @@ CUDA_VISIBLE_DEVICES=1 python generate_TR_zT_w_att.py \
   --tr_w_radius 9 \
   --tr_w_channel -1 \
   --tr_w_injection complex
-
+```
 ### 2.GS
 Generates attacked latents for Gaussian Shading.
 * Uses `--export_zt_only` to save the latents directly.
@@ -62,7 +62,7 @@ CUDA_VISIBLE_DEVICES=1 python generate_GS_zT_w_att.py \
   --n_zt 16 --zt_seed 12345 \
   --export_latents_dir /path/to/experiment/latents_experiment-number \
   --export_latents_name generate_GS_w_att.pt
-
+```
  ### 3.PRC
 Generates attacked latents for PRC.
 * **Fix**: Added `--lam1 0.83` to match the output filename suffix (`0_83`).
@@ -82,6 +82,7 @@ CUDA_VISIBLE_DEVICES=0 python generate_PRC_zT_w_att.py \
   --export_latents_dir /path/to/experiment/latents_experiment \
   --export_latents_name generate_PRC_w_att_0_83.pt \
   --wm_meta_subdir wm_meta_prc
+```
 ### 4.T2S
 Generates attacked latents for T2SMark.
 
@@ -97,3 +98,4 @@ CUDA_VISIBLE_DEVICES=1 python generate_T2S_zT_w_att.py \
   --lam1 0.9 \
   --ssc_cal_N 12 --ssc_energy_ratio 0.90 --ssc_mini_steps 6 \
   --t2s_tau 0.674
+```
