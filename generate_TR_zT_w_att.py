@@ -370,7 +370,7 @@ class FrequencyMaskFamily:
 
 
 # -----------------------------
-# Workflow: ssp + EBS + SPS (SPS changed)
+# Workflow: ssp + ssm + SPS (SPS changed)
 # -----------------------------
 
 
@@ -441,8 +441,8 @@ class AlignPreserveNaW_New:
         self.B_sens = B_sens
         return {"B_sens": B_sens, "d_sens": torch.tensor([d_sens], device=self.device)}
 
-    def ebs_sample(self, wm_family: FrequencyMaskFamily, lam1: float, seed_prompt: int, K: bytes) -> torch.Tensor:
-        """EBS unchanged: FFT-mix between z_wm and projected z_sens."""
+    def ssm_sample(self, wm_family: FrequencyMaskFamily, lam1: float, seed_prompt: int, K: bytes) -> torch.Tensor:
+        """ssm unchanged: FFT-mix between z_wm and projected z_sens."""
         assert self.B_sens is not None, "Call run_ssp first."
         B, C, H, W = self.latent_shape
         lam1 = float(lam1)
@@ -489,7 +489,7 @@ class AlignPreserveNaW_New:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="TR ssp+EBS (unchanged) + SPS(repair-only) => save zT bank")
+    parser = argparse.ArgumentParser(description="TR ssp+ssm (unchanged) + SPS(repair-only) => save zT bank")
 
     # IO
     parser.add_argument("--prompts", type=str, required=True, help="Used for ssp calibration only")
@@ -511,7 +511,7 @@ def main():
     parser.add_argument("--ssp_energy_ratio", type=float, default=0.90)
     parser.add_argument("--ssp_d_sens_max", type=int, default=64)
 
-    # EBS mix
+    # ssm mix
     parser.add_argument("--lam1", type=float, default=0.9)
     parser.add_argument("--seed", type=int, default=12345, help="seed_base, actual seed_i = seed + i")
 
@@ -614,7 +614,7 @@ def main():
     for i in range(M):
         seed_i = seed_base + i
         seeds.append(seed_i)
-        z_pre = workflow.ebs_sample(wm_family=wm_family, lam1=float(args.lam1), seed_prompt=seed_i, K=K)  # (1,4,H,W)
+        z_pre = workflow.ssm_sample(wm_family=wm_family, lam1=float(args.lam1), seed_prompt=seed_i, K=K)  # (1,4,H,W)
         z_ref = workflow.sps_refine(wm_family=wm_family, zT=z_pre, sps_cfg=sps_cfg, K=K)  # (1,4,H,W)
         z_list.append(z_ref[0].detach().cpu().to(torch.float32))
 
@@ -641,7 +641,7 @@ def main():
             "lam2": 1.0 - float(args.lam1),
             "wm_cfg": wm_cfg.__dict__,
             "ssp_basis_path": os.path.join(meta_dir, "ssp_basis.pt"),
-            "note": "TR zT bank: EBS(unchanged) + SPS(repair-only, 1x). Seeds are incremental.",
+            "note": "TR zT bank: ssm(unchanged) + SPS(repair-only, 1x). Seeds are incremental.",
         },
         out_pt,
     )
