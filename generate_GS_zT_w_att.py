@@ -296,49 +296,32 @@ C, H, W = 4, 64, 64
 
 def bits_bin_to_bytes(bits: str) -> bytes:
     bits = bits.strip()
-    if not set(bits) <= {"0","1"}:
-        raise ValueError("二进制密钥/nonce 只能包含 0/1")
-    if len(bits) % 8 != 0:
-        raise ValueError("二进制串长度必须是 8 的倍数")
     out = bytearray()
     for i in range(0, len(bits), 8):
         out.append(int(bits[i:i+8], 2))
     return bytes(out)
 
 def parse_key_32bytes(args) -> bytes:
-    # 互斥：--key_ones / --key_hex / --key_bin
     cnt = int(args.key_ones) + (args.key_hex is not None) + (args.key_bin is not None)
-    if cnt != 1:
-        raise ValueError("密钥输入需且仅需一种：--key_ones 或 --key_hex 或 --key_bin")
     if args.key_ones:
         return b"\xff" * 32  # 32 字节全 1（即 256 个比特 1）
     if args.key_hex is not None:
         hx = args.key_hex.strip().lower()
-        if len(hx) != 64 or any(ch not in "0123456789abcdef" for ch in hx):
-            raise ValueError("key_hex 必须是 64 个十六进制字符（=32字节）")
         return bytes.fromhex(hx)
     if args.key_bin is not None:
         bs = args.key_bin.strip()
-        if len(bs) != 256:
-            raise ValueError("key_bin 必须是 256 位 01 串（=32字节）")
         return bits_bin_to_bytes(bs)
     raise AssertionError
 
 def parse_nonce_12bytes(args) -> bytes:
-    # 任选其一；若均不传则给一个固定 nonce（仅用于复现实验）
     if args.nonce_zero:
         return b"\x00" * 12
     if args.nonce_hex is not None:
         hx = args.nonce_hex.strip().lower()
-        if len(hx) != 24 or any(ch not in "0123456789abcdef" for ch in hx):
-            raise ValueError("nonce_hex 必须是 24 个十六进制字符（=12字节）")
         return bytes.fromhex(hx)
     if args.nonce_bin is not None:
         bs = args.nonce_bin.strip()
-        if len(bs) != 96:
-            raise ValueError("nonce_bin 必须是 96 位 01 串（=12字节）")
         return bits_bin_to_bytes(bs)
-    # 固定 nonce（仅为实验复现方便；生产不建议固定/复用）
     return b"GS-fixed-nc!"  # 12 bytes
 
 def make_base_bits(k_bits: int, rng: np.random.Generator) -> np.ndarray:
@@ -799,13 +782,11 @@ class AlignPreserveNaW:
                 eta=ssc_cfg.eta_ddim,
                 mini_steps=ssc_cfg.mini_steps
             )
-            x_tilde = self.sampler.mini_sample_image(zT, prompt, cfg)#生成中间图像
-            loss = self.surrogate(x_tilde, prompt)#计算损失函数，这个具体的函数得看损失函数
-            g = torch.autograd.grad(loss, zT, retain_graph=False, create_graph=False)[0]#计算梯度（潜变量对损失的影响）
-            #梯度处理与收集
+            x_tilde = self.sampler.mini_sample_image(zT, prompt, cfg)
+            loss = self.surrogate(x_tilde, prompt)
+            g = torch.autograd.grad(loss, zT, retain_graph=False, create_graph=False)[0]
             g_flat = flatten_latent(g).detach().cpu()  # (1,D)
             grads.append(g_flat)
-        #拼接梯度矩阵，之后才能去分析
         G = torch.cat(grads, dim=0)  # (N_cal, D)
 
         # randomized SVD / PCA
@@ -1110,7 +1091,6 @@ def main():
     # (Tree-Ring args removed in GS script)
 
     args = parser.parse_args()
-    # 如果用户没显式给 key_hex/key_bin/key_ones，则默认用 key_ones
     if (not args.gs_key_ones) and (args.gs_key_hex is None) and (args.gs_key_bin is None):
         args.gs_key_ones = True
 
@@ -1164,7 +1144,7 @@ def main():
         latent_shape=latent_shape,
         device=device,
     )
-    # EBS mixing weights (lambda1^2 + lambda2^2 = 1)
+
     workflow.lambda1 = float(args.lambda1)
     if workflow.lambda1 < 0:
         raise ValueError('--lambda1 must be >= 0')
@@ -1174,11 +1154,6 @@ def main():
     workflow.lambda2 = float((max(0.0, 1.0 - workflow.lambda1 * workflow.lambda1)) ** 0.5)
     workflow.gs_latent_seed = int(getattr(args, "zt_seed", 12345))
 
-
-    # --- SSC calibration (cached) ---
-    # SSC is expensive; by default we compute it once and cache the bases (B_sens, B_wm) to disk.
-    # If --ssc_cache points to an existing file, we load and reuse it.
-    # This avoids recomputing SSC for every run / prompt set.
     cal = (prompts * ((args.ssc_N_cal + len(prompts) - 1) // len(prompts)))[: args.ssc_N_cal]
     ssc_cfg = SSCConfig(
         N_cal=args.ssc_N_cal,
