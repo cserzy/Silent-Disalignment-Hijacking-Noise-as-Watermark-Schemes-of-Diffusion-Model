@@ -31,14 +31,14 @@ def read_prompts(txt: str, max_n: int) -> List[str]:
 
 # ---------------- configs ----------------
 @dataclass
-class SSCConfig:
+class SSPConfig:
     cal_N: int = 12
     energy_ratio: float = 0.90
     mini_steps: int = 6
     guidance_scale: float = 7.5
 
 
-# ---------------- SSC: build basis ----------------
+# ---------------- SSP: build basis ----------------
 @torch.no_grad()
 def _encode_prompt(pipe: StableDiffusionPipeline, prompt: str) -> torch.Tensor:
     # [1,77,768] like
@@ -54,10 +54,10 @@ def _encode_prompt(pipe: StableDiffusionPipeline, prompt: str) -> torch.Tensor:
     return enc
 
 
-def run_ssc_build_Bsens(
+def run_SSP_build_Bsens(
     pipe: StableDiffusionPipeline,
     prompts: List[str],
-    ssc_cfg: SSCConfig,
+    SSP_cfg: SSPConfig,
     cache_pt: str,
     reuse_cache: bool = True,
 ) -> Tuple[torch.Tensor, int]:
@@ -74,15 +74,15 @@ def run_ssc_build_Bsens(
     C, H, W = 4, 64, 64
     D = C * H * W
 
-    mini_steps = int(ssc_cfg.mini_steps)
-    gscale = float(ssc_cfg.guidance_scale)
+    mini_steps = int(SSP_cfg.mini_steps)
+    gscale = float(SSP_cfg.guidance_scale)
 
     grads: List[torch.Tensor] = []
     for p in prompts:
         z0 = torch.randn((1, C, H, W), device=device, dtype=torch.float32, requires_grad=True)
 
         # light-weight forward: predict eps at a fixed timestep using UNet
-        # NOTE: keep consistent with your existing SSC logic (mini sampling)
+        # NOTE: keep consistent with your existing SSP logic (mini sampling)
         # We approximate by one-step UNet grad w.r.t. z0 at t=T/2
         t = torch.tensor([pipe.scheduler.config.num_train_timesteps // 2], device=device, dtype=torch.long)
 
@@ -108,14 +108,14 @@ def run_ssc_build_Bsens(
     U, S, Vh = torch.linalg.svd(G, full_matrices=False)  # U: [D,N]
     energy = (S**2)
     cum = torch.cumsum(energy, dim=0) / torch.sum(energy)
-    d_sens = int(torch.searchsorted(cum, torch.tensor([ssc_cfg.energy_ratio])).item() + 1)
+    d_sens = int(torch.searchsorted(cum, torch.tensor([SSP_cfg.energy_ratio])).item() + 1)
     B_sens = U[:, :d_sens].contiguous()  # [D, d]
 
-    torch.save({"B_sens": B_sens, "d_sens": d_sens, "ssc_cfg": asdict(ssc_cfg)}, cache_pt)
+    torch.save({"B_sens": B_sens, "d_sens": d_sens, "SSP_cfg": asdict(SSP_cfg)}, cache_pt)
     return B_sens, d_sens
 
 
-# ---------------- EBS + SPS (one-shot tail repair) ----------------
+# ---------------- SSM + SPS (one-shot tail repair) ----------------
 @torch.no_grad()
 def proj_to_span(B: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """
@@ -173,7 +173,7 @@ def main():
     ap = argparse.ArgumentParser()
 
     ap.add_argument("--model_id", type=str, required=True)
-    ap.add_argument("--prompts", type=str, required=True, help="用于 SSC 校准的 prompts txt（取前 cal_N 条）")
+    ap.add_argument("--prompts", type=str, required=True, help="用于 SSP 校准的 prompts txt（取前 cal_N 条）")
     ap.add_argument("--cluster_pt", type=str, required=True, help="official T2S cluster pt")
     ap.add_argument("--outdir", type=str, required=True)
 
@@ -195,12 +195,12 @@ def main():
     # attack mixing
     ap.add_argument("--lam1", type=float, default=0.9, help="zT = lam1*z_wm + lam2*z_free, lam2=sqrt(1-lam1^2)")
 
-    # SSC
-    ap.add_argument("--ssc_cal_N", type=int, default=12)
-    ap.add_argument("--ssc_energy_ratio", type=float, default=0.9)
-    ap.add_argument("--ssc_mini_steps", type=int, default=6)
-    ap.add_argument("--ssc_guidance", type=float, default=7.5)
-    ap.add_argument("--reuse_ssc", type=int, default=1)
+    # SSP
+    ap.add_argument("--SSP_cal_N", type=int, default=12)
+    ap.add_argument("--SSP_energy_ratio", type=float, default=0.9)
+    ap.add_argument("--SSP_mini_steps", type=int, default=6)
+    ap.add_argument("--SSP_guidance", type=float, default=7.5)
+    ap.add_argument("--reuse_SSP", type=int, default=1)
 
     # t2s params (默认从 cluster settings 里读；读不到时用 CLI)
     ap.add_argument("--t2s_tau", type=float, default=0.674)
@@ -232,7 +232,7 @@ def main():
         export_dir = lat_exp_dir
     ensure_dir(export_dir)
 
-    ssc_cache = os.path.join(lat_exp_dir, "ssc_basis.pt")
+    SSP_cache = os.path.join(lat_exp_dir, "SSP_basis.pt")
 
     # load cluster
     pack = torch.load(args.cluster_pt, map_location="cpu")
@@ -263,7 +263,7 @@ def main():
         signs.append(sgn.cpu())
         support_sizes.append(int(idx.numel()))
 
-    # load pipeline (for SSC)
+    # load pipeline (for SSP)
     pipe = StableDiffusionPipeline.from_pretrained(
         args.model_id,
         torch_dtype=torch_dtype if torch_dtype != torch.float32 else torch.float16,
@@ -280,20 +280,20 @@ def main():
     if args.attn_slicing:
         pipe.enable_attention_slicing()
 
-    # SSC basis
-    cal_prompts = read_prompts(args.prompts, int(args.ssc_cal_N))
-    ssc_cfg = SSCConfig(
-        cal_N=int(args.ssc_cal_N),
-        energy_ratio=float(args.ssc_energy_ratio),
-        mini_steps=int(args.ssc_mini_steps),
-        guidance_scale=float(args.ssc_guidance),
+    # SSP basis
+    cal_prompts = read_prompts(args.prompts, int(args.SSP_cal_N))
+    SSP_cfg = SSPConfig(
+        cal_N=int(args.SSP_cal_N),
+        energy_ratio=float(args.SSP_energy_ratio),
+        mini_steps=int(args.SSP_mini_steps),
+        guidance_scale=float(args.SSP_guidance),
     )
-    B_sens, d_sens = run_ssc_build_Bsens(
+    B_sens, d_sens = run_SSP_build_Bsens(
         pipe=pipe,
         prompts=cal_prompts,
-        ssc_cfg=ssc_cfg,
-        cache_pt=ssc_cache,
-        reuse_cache=bool(int(args.reuse_ssc)),
+        SSP_cfg=SSP_cfg,
+        cache_pt=SSP_cache,
+        reuse_cache=bool(int(args.reuse_SSP)),
     )  # CPU float32
 
     # build zT_pre and repaired zT_ref (one-shot)
@@ -351,12 +351,12 @@ def main():
         "key_channel_idx": key_channel_idx,
         "lam1": lam1,
         "lam2": lam2,
-        "ssc_cfg": asdict(ssc_cfg),
+        "SSP_cfg": asdict(SSP_cfg),
         "d_sens": int(d_sens),
         "support_sizes": support_sizes,
         "cluster_pt": args.cluster_pt,
-        "model_id_for_ssc": args.model_id,
-        "prompts_for_ssc": args.prompts,
+        "model_id_for_SSP": args.model_id,
+        "prompts_for_SSP": args.prompts,
         "seed": int(args.seed),
         "out_pt": out_pt,
         "out_pre_pt": out_pre_pt,
