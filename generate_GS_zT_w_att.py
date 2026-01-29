@@ -304,7 +304,7 @@ def bits_bin_to_bytes(bits: str) -> bytes:
 def parse_key_32bytes(args) -> bytes:
     cnt = int(args.key_ones) + (args.key_hex is not None) + (args.key_bin is not None)
     if args.key_ones:
-        return b"\xff" * 32  # 32 字节全 1（即 256 个比特 1）
+        return b"\xff" * 32 
     if args.key_hex is not None:
         hx = args.key_hex.strip().lower()
         return bytes.fromhex(hx)
